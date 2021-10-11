@@ -706,10 +706,55 @@ fn compile_empty_return() -> Result<(), Error> {
     check_function_bytecode(sources, expected)
 }
 
+#[test]
+fn compile_string_interpolation() -> Result<(), Error> {
+    let sources = r#"
+        func Testing(year: Int32) -> String {
+            let birthYear = 1990;
+            let name = "John";
+            return s"My name is \(name) and I am \(year - birthYear) years old";
+        }
+
+        func OperatorAdd(a: script_ref<String>, b: script_ref<String>) -> String
+        func OperatorSubtract(a: Int32, b: Int32) -> Int32
+        "#;
+    let expected = vec![
+        Instr::Assign,
+        Instr::Local(PoolIndex::new(30)),
+        Instr::I32Const(1990),
+        Instr::Assign,
+        Instr::Local(PoolIndex::new(31)),
+        Instr::StringConst(PoolIndex::new(0)),
+        Instr::Return,
+        Instr::InvokeStatic(Offset::new(149), 0, PoolIndex::new(22), 0),
+        Instr::InvokeStatic(Offset::new(60), 0, PoolIndex::new(22), 0),
+        Instr::StringConst(PoolIndex::new(1)),
+        Instr::InvokeStatic(Offset::new(39), 0, PoolIndex::new(22), 0),
+        Instr::AsRef(PoolIndex::new(7)),
+        Instr::Local(PoolIndex::new(31)),
+        Instr::StringConst(PoolIndex::new(2)),
+        Instr::ParamEnd,
+        Instr::ParamEnd,
+        Instr::InvokeStatic(Offset::new(73), 0, PoolIndex::new(22), 1),
+        Instr::AsRef(PoolIndex::new(7)),
+        Instr::ToString(PoolIndex::new(8)),
+        Instr::InvokeStatic(Offset::new(34), 0, PoolIndex::new(23), 0),
+        Instr::Param(PoolIndex::new(24)),
+        Instr::Local(PoolIndex::new(30)),
+        Instr::ParamEnd,
+        Instr::StringConst(PoolIndex::new(3)),
+        Instr::ParamEnd,
+        Instr::ParamEnd,
+        Instr::Nop,
+    ];
+    check_function_bytecode(sources, expected)
+}
+
 fn check_compilation_pool(code: &str) -> Result<ConstantPool, Error> {
     let module = parser::parse_str(code).unwrap();
     let mut scripts = ScriptBundle::load(&mut Cursor::new(PREDEF))?;
-    CompilationUnit::new(&mut scripts.pool)?.compile(vec![module])?;
+    let res = CompilationUnit::new(&mut scripts.pool)?.compile(vec![module])?;
+    println!("{:?}", res);
 
     Ok(scripts.pool)
 }
