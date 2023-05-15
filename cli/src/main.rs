@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use flexi_logger::{LevelFilter, LogSpecBuilder, Logger};
 use gumdrop::Options;
@@ -54,13 +55,16 @@ struct LintOpts {
     bundle: Option<PathBuf>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> ExitCode {
     setup_logger();
 
-    run().map_err(|err| {
-        log::error!("{}", err);
-        err
-    })
+    match run() {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(err) => {
+            log::error!("{}", err);
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn setup_logger() {
@@ -105,10 +109,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn compile(opts: CompileOpts) -> Result<(), redscript_compiler::error::Error> {
     let mut bundle = load_bundle(&opts.bundle)?;
-
+    
     let files = Files::from_dirs(&opts.src, &SourceFilter::None)?;
 
-    match CompilationUnit::new_with_defaults(&mut bundle.pool)?.compile_and_report(&files) {
+    match CompilationUnit::new_with_defaults(&mut bundle.pool, files)?.compile_and_report() {
         Ok(()) => {
             bundle.save(&mut io::BufWriter::new(File::create(&opts.output)?))?;
             log::info!("Output successfully saved to {}", opts.output.display());
@@ -166,8 +170,8 @@ fn lint(opts: LintOpts) -> Result<(), redscript_compiler::error::Error> {
 
             let files = Files::from_dirs(&opts.src, &SourceFilter::None)?;
 
-            if CompilationUnit::new_with_defaults(&mut bundle.pool)?
-                .compile_and_report(&files)
+            if CompilationUnit::new_with_defaults(&mut bundle.pool, files)?
+                .compile_and_report()
                 .is_ok()
             {
                 log::info!("Lint successful");

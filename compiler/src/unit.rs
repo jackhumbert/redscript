@@ -1,4 +1,6 @@
+use std::alloc::Global;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
 
 use redscript::ast::{Constant, Expr, Ident, Literal, Seq, SourceAst, Span, TypeName};
 use redscript::bundle::{ConstantPool, PoolIndex};
@@ -15,7 +17,7 @@ use crate::diagnostics::{Diagnostic, DiagnosticPass, FunctionMetadata};
 use crate::error::{Cause, Error, ResultSpan};
 use crate::parser::*;
 use crate::scope::{Reference, Scope, TypeId, Value};
-use crate::source_map::Files;
+use crate::source_map::{Files, SourceFilter};
 use crate::sugar::Desugar;
 use crate::symbol::{FunctionSignature, Import, ModulePath, Symbol, SymbolMap};
 use crate::transform::ExprTransformer;
@@ -33,15 +35,16 @@ pub struct CompilationUnit<'a> {
     proxies: ProxyMap,
     diagnostics: Vec<Diagnostic>,
     diagnostic_passes: Vec<Box<dyn DiagnosticPass + Send>>,
+    files: Files
 }
 
 impl<'a> CompilationUnit<'a> {
-    pub fn new_with_defaults(pool: &'a mut ConstantPool) -> Result<Self, Error> {
+    pub fn new_with_defaults(pool: &'a mut ConstantPool, files: Files) -> Result<Self, Error> {
         let passes: Vec<Box<dyn DiagnosticPass + Send>> = vec![Box::new(UnusedCheck), Box::new(ReturnValueCheck)];
-        Self::new(pool, passes)
+        Self::new(pool, passes, files)
     }
 
-    pub fn new(pool: &'a mut ConstantPool, passes: Vec<Box<dyn DiagnosticPass + Send>>) -> Result<Self, Error> {
+    pub fn new(pool: &'a mut ConstantPool, passes: Vec<Box<dyn DiagnosticPass + Send>>, files: Files) -> Result<Self, Error> {
         let symbols = SymbolMap::new(pool)?;
         let mut scope = Scope::new(pool)?;
 
@@ -61,45 +64,49 @@ impl<'a> CompilationUnit<'a> {
             proxies: HashMap::new(),
             diagnostics: vec![],
             diagnostic_passes: passes,
+            files,
         })
     }
 
-    pub fn compile(mut self, modules: Vec<SourceModule>) -> Result<Vec<Diagnostic>, Error> {
+    pub fn compile_files(mut self) -> Result<Vec<Diagnostic>, Error> {
+        let modules = self.parse()?;
         let funcs = self.compile_modules(modules, true, false)?;
         self.finish(funcs)
     }
 
-    pub fn compile_files(self, files: &Files) -> Result<Vec<Diagnostic>, Error> {
-        self.compile(Self::parse(files)?)
-    }
+    // pub fn compile_files(self, files: &Files) -> Result<Vec<Diagnostic>, Error> {
+    //     let p = self.parse(files)?;
+    //     self.compile(p)
+    // }
 
-    pub fn typecheck(
+    pub fn typecheck_files(
         mut self,
-        modules: Vec<SourceModule>,
         desugar: bool,
         permissive: bool,
     ) -> Result<(Vec<CompiledFunction>, Vec<Diagnostic>), Error> {
+        let modules = self.parse()?;
         let funcs = self.compile_modules(modules, desugar, permissive)?;
         Ok((funcs, self.diagnostics))
     }
 
-    pub fn typecheck_files(
-        self,
-        files: &Files,
-        desugar: bool,
-        permissive: bool,
-    ) -> Result<(Vec<CompiledFunction>, Vec<Diagnostic>), Error> {
-        self.typecheck(Self::parse(files)?, desugar, permissive)
-    }
+    // pub fn typecheck_files(
+    //     self,
+    //     files: &Files,
+    //     desugar: bool,
+    //     permissive: bool,
+    // ) -> Result<(Vec<CompiledFunction>, Vec<Diagnostic>), Error> {
+    //     let p = self.parse(files)?;
+    //     self.typecheck(p, desugar, permissive)
+    // }
 
-    pub fn compile_and_report(self, files: &Files) -> Result<(), Error> {
-        match self.compile_files(files) {
+    pub fn compile_and_report(self) -> Result<(), Error> {
+        match self.compile_files() {
             Ok(mut diagnostics) => {
                 diagnostics.sort_by_key(Diagnostic::is_fatal);
 
-                for diagnostic in &diagnostics {
-                    diagnostic.log(files);
-                }
+                // for diagnostic in &diagnostics {
+                //     diagnostic.log(&self.files);
+                // }
 
                 if diagnostics.iter().any(Diagnostic::is_fatal) {
                     let spans = diagnostics
@@ -114,7 +121,7 @@ impl<'a> CompilationUnit<'a> {
             }
             Err(err) => match Diagnostic::from_error(err) {
                 Ok(diagnostic) => {
-                    diagnostic.log(files);
+                    // diagnostic.log(&self.files);
 
                     if diagnostic.is_fatal() {
                         Err(Error::MultipleErrors(vec![(diagnostic.code(), diagnostic.span())]))
@@ -130,10 +137,17 @@ impl<'a> CompilationUnit<'a> {
         }
     }
 
-    fn parse(files: &Files) -> Result<Vec<SourceModule>, Error> {
+    fn parse(&mut self) -> Result<Vec<SourceModule>, Error> {
         let mut modules = vec![];
-        for file in files.files() {
-            let parsed = parse_file(file).map_err(|err| {
+        for file in self.files.files() {
+            let file_idx = self.pool.add_definition(Definition::source_file(SourceFile {
+                id: file.id(),
+                path_hash_1: file.id(),
+                path_hash_2: file.id(),
+                path: file.path().to_path_buf()
+            }));
+            file.set_idx(file_idx);
+            let parsed = parse_file(file, file_idx).map_err(|err| {
                 let pos = file.byte_offset() + err.location.offset;
                 Error::SyntaxError(err.expected, Span::new(pos, pos))
             })?;
@@ -157,6 +171,7 @@ impl<'a> CompilationUnit<'a> {
         for module in modules {
             let path = module.path.unwrap_or(ModulePath::EMPTY);
             let mut slots = Vec::with_capacity(module.entries.len());
+            let file_idx = module.file_idx;
 
             for entry in module.entries {
                 if eval_conditions(&cte, entry.annotations())? {
@@ -166,10 +181,10 @@ impl<'a> CompilationUnit<'a> {
                     };
                 }
             }
-            queue.push((path, module.imports, slots));
+            queue.push((path, module.imports, slots, file_idx));
         }
 
-        for (path, imports, slots) in queue {
+        for (path, imports, slots, file_idx) in queue {
             let mut module_scope = self.scope.clone();
 
             if !path.is_empty() {
@@ -225,18 +240,19 @@ impl<'a> CompilationUnit<'a> {
                             visibility,
                             source,
                             &mut module_scope,
+                            file_idx,
                         )
                     }
                     Slot::Class {
                         index,
                         source,
                         visibility,
-                    } => self.define_class(index, visibility, source, false, &mut module_scope),
+                    } => self.define_class(index, visibility, source, false, &mut module_scope, file_idx),
                     Slot::Struct {
                         index,
                         source,
                         visibility,
-                    } => self.define_class(index, visibility, source, true, &mut module_scope),
+                    } => self.define_class(index, visibility, source, true, &mut module_scope, file_idx),
                     Slot::Field {
                         index,
                         source,
@@ -415,6 +431,7 @@ impl<'a> CompilationUnit<'a> {
         source: ClassSource,
         is_struct: bool,
         scope: &mut Scope,
+        file_idx: Option<PoolIndex<Definition>>,
     ) -> Result<(), Error> {
         let is_import_only = source.qualifiers.contain(Qualifier::ImportOnly);
         let is_class_native = is_import_only || source.qualifiers.contain(Qualifier::Native);
@@ -453,6 +470,7 @@ impl<'a> CompilationUnit<'a> {
                         visibility,
                         fun,
                         scope,
+                        file_idx
                     )?;
                     functions.push(fun_idx);
                 }
@@ -495,7 +513,7 @@ impl<'a> CompilationUnit<'a> {
         };
         let name_idx = self.pool.definition(class_idx)?.name;
 
-        self.pool.put_definition(class_idx, Definition::class(name_idx, class));
+        self.pool.put_definition(class_idx, Definition::class_with_file(name_idx, file_idx.unwrap_or(PoolIndex::UNDEFINED), class));
         Ok(())
     }
 
@@ -511,6 +529,7 @@ impl<'a> CompilationUnit<'a> {
         visibility: Visibility,
         source: FunctionSource,
         scope: &mut Scope,
+        file_idx: Option<PoolIndex<Definition>>
     ) -> Result<(), Error> {
         let decl = &source.declaration;
         let is_native = !is_replacement && decl.qualifiers.contain(Qualifier::Native);
@@ -551,9 +570,78 @@ impl<'a> CompilationUnit<'a> {
             parameters.push(idx);
         }
 
+        // let file = match location {
+        //     Some(path) => {
+        //         let cname = path.to_str().unwrap().into();
+        //         let name = self.pool.names.add(cname);
+        //         let def = Definition::source_file(name, SourceFile {
+        //             id: name.into(),
+        //             path_hash: 1,
+        //             path
+        //         });
+        //         self.pool.add_definition(def)
+        //     },
+        //     None => PoolIndex::DEFAULT_SOURCE
+        // };
+        // let file = match location {
+        //     Some(path) => {
+        //         self.pool.names.add(path.to_str().unwrap().into())
+        //     },
+        //     None => PoolIndex::DEFAULT_SOURCE
+        // };
+
+        let line = if let Some(idx) = file_idx {
+            if let Some(file) = self.files.lookup_file_by_poolindex(idx) {
+                file.line_number(source.declaration.span.low).try_into().unwrap()
+            } else {
+                log::info!("No file");
+                0
+            }
+            /*
+            match self.pool.definition(index) {
+                Ok(definition) => {
+                    match &definition.value {
+                        AnyDefinition::SourceFile(source_file) => {
+                            let sources = std::fs::read_to_string(&source_file.path).unwrap();
+                            let target = source.declaration.span.low.0.try_into().unwrap();
+                            let mut lines = vec![];
+                            for (offset, _) in sources.match_indices('\n') {
+                                lines.push(offset + 1);
+                            }
+                            let res = lines.binary_search(&target).map(|p| p + 1);
+                            res.unwrap_or_else(|i| i)
+                            // let file = std::fs::File::open(&source_file.path).unwrap();
+                            // let lines = std::io::BufRead::lines(std::io::BufReader::new(file));
+                            // let mut pos: usize = 0;
+                            // let mut line_number = 0;
+                            // let target = source.declaration.span.low.0.try_into().unwrap();
+                            // for line in lines {
+                            //     let line_str = line.unwrap();
+                            //     if pos > target {
+                            //         break;
+                            //     }
+                            //     // if !line_str.trim().is_empty() {
+                            //         pos += line_str.len() + 1;
+                            //     // }
+                            //     line_number += 1;
+                            // }
+                            // line_number
+                        },
+                        _ => 0
+                    }
+                },
+                _ => 0 
+            }
+            */
+        } else {
+            log::info!("No file_idx");
+            0
+        };
+        log::info!("{}: {}", decl.name, line);
+
         let source_ref = SourceReference {
-            file: PoolIndex::DEFAULT_SOURCE,
-            line: 0,
+            file: file_idx.unwrap_or(PoolIndex::DEFAULT_SOURCE),
+            line: line.try_into().unwrap(),
         };
 
         let flags = FunctionFlags::new()

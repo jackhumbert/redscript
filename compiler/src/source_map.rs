@@ -5,6 +5,8 @@ use std::{fmt, iter};
 
 use itertools::{Either, Itertools};
 use redscript::ast::{Pos, Span};
+use redscript::bundle::PoolIndex;
+use redscript::definition::Definition;
 use walkdir::{DirEntry, WalkDir};
 
 use crate::error::Error;
@@ -30,18 +32,18 @@ impl Files {
 
     pub fn from_files(paths: impl Iterator<Item = PathBuf>) -> Result<Self, Error> {
         let mut files = Self::new();
-        for path in paths {
+        for (idx, path) in paths.enumerate() {
             let sources = std::fs::read_to_string(&path)?;
-            files.add(path, sources);
+            files.add(path, sources, idx.try_into().unwrap());
         }
         Ok(files)
     }
 
-    pub fn files(&self) -> impl Iterator<Item = &File> {
-        self.entries.iter()
+    pub fn files(&mut self) -> impl Iterator<Item = &mut File> {
+        self.entries.iter_mut()
     }
 
-    pub fn add(&mut self, path: PathBuf, source: String) {
+    pub fn add(&mut self, path: PathBuf, source: String, id: u32) {
         let low = self.entries.last().map_or(Pos(0), |f| f.high + 1);
         let high = low + source.len();
         let mut lines = vec![];
@@ -53,6 +55,8 @@ impl Files {
             lines: NonEmptyVec(low, lines),
             high,
             source,
+            idx: PoolIndex::DEFAULT_SOURCE,
+            id: id + 1903,
         };
         self.entries.push(file);
     }
@@ -61,6 +65,14 @@ impl Files {
         let index = self
             .entries
             .binary_search_by(|file| file.span().compare_pos(pos))
+            .ok()?;
+        self.entries.get(index)
+    }
+
+    pub fn lookup_file_by_poolindex(&self, idx: PoolIndex<Definition>) -> Option<&File> {
+        let index = self
+            .entries
+            .binary_search_by(|file| file.idx().cmp(&idx))
             .ok()?;
         self.entries.get(index)
     }
@@ -119,6 +131,8 @@ pub struct File {
     lines: NonEmptyVec<Pos>,
     high: Pos,
     source: String,
+    idx: PoolIndex<Definition>,
+    id: u32,
 }
 
 impl File {
@@ -155,6 +169,11 @@ impl File {
         Some(loc)
     }
 
+    pub fn line_number(&self, offset: Pos) -> usize {
+        let res = self.lines.1.binary_search(&offset).map(|p| p + 1);
+        res.unwrap_or_else(|i| i)
+    }
+
     pub fn enclosing_line(&self, line: usize) -> &str {
         let low = if line == 0 {
             self.lines.0
@@ -175,6 +194,18 @@ impl File {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    pub fn set_idx(&mut self, idx: PoolIndex<Definition>) {
+        self.idx = idx;
+    }
+
+    pub fn idx(&self) -> PoolIndex<Definition> {
+        self.idx
+    }
+
+    pub fn id(&self) -> u32 {
+        self.id
+    }
 }
 
 impl Default for File {
@@ -184,6 +215,8 @@ impl Default for File {
             lines: NonEmptyVec(Pos::ZERO, vec![]),
             high: Pos::ZERO,
             source: String::new(),
+            idx: PoolIndex::DEFAULT_SOURCE,
+            id: 0
         }
     }
 }

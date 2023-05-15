@@ -1,9 +1,11 @@
+use std::path::{PathBuf, Path};
 use std::str::FromStr;
 
 use peg::error::ParseError;
 use peg::str::LineCol;
 use redscript::ast::{BinOp, Constant, Expr, Ident, Literal, Pos, Seq, SourceAst, Span, SwitchCase, TypeName, UnOp};
-use redscript::definition::Visibility;
+use redscript::bundle::PoolIndex;
+use redscript::definition::{Visibility, Definition};
 use redscript::Ref;
 use strum::EnumString;
 
@@ -15,6 +17,7 @@ pub struct SourceModule {
     pub path: Option<ModulePath>,
     pub imports: Vec<Import>,
     pub entries: Vec<SourceEntry>,
+    pub file_idx: Option<PoolIndex<Definition>>,
 }
 
 #[derive(Debug)]
@@ -151,12 +154,12 @@ pub enum AnnotationKind {
     RuntimeProperty,
 }
 
-pub fn parse_file(file: &File) -> Result<SourceModule, ParseError<LineCol>> {
-    lang::module(file.source(), file.byte_offset())
+pub fn parse_file(file: &File, file_idx: PoolIndex<Definition>) -> Result<SourceModule, ParseError<LineCol>> {
+    lang::module(file.source(), file.byte_offset(), Some(file_idx))
 }
 
 pub fn parse_str(str: &str) -> Result<SourceModule, ParseError<LineCol>> {
-    lang::module(str, Pos::ZERO)
+    lang::module(str, Pos::ZERO, None)
 }
 
 peg::parser! {
@@ -340,9 +343,9 @@ peg::parser! {
         rule module_path() -> ModulePath  =
             keyword("module") _ parts:dotsep(<ident()>) { ModulePath { parts } }
 
-        pub rule module() -> SourceModule =
+        pub rule module(file_idx: Option<PoolIndex<Definition>>) -> SourceModule =
             _ path:module_path()? _ imports:(import() ** _) _ entries:(source_entry() ** _) _
-            { SourceModule { path, imports, entries } }
+            { SourceModule { path, imports, entries, file_idx } }
 
         rule switch() -> Expr<SourceAst>
             = pos:pos() keyword("switch") _ matcher:expr() _ "{" _ cases:(case() ** _) _ default:default()? _ "}" _ ";"? end:pos()
@@ -509,6 +512,7 @@ mod tests {
                 }
              }",
             Pos::ZERO,
+            None
         )
         .unwrap();
         assert_eq!(
@@ -524,6 +528,7 @@ mod tests {
                 return this.m_field > optimum ? this.m_field : optimum;
              }",
             Pos::ZERO,
+            None
         )
         .unwrap();
         assert_eq!(
@@ -619,6 +624,7 @@ mod tests {
             }
             "#,
             Pos::ZERO,
+            None
         )
         .unwrap();
         assert_eq!(
@@ -637,6 +643,7 @@ mod tests {
             }
             "#,
             Pos::ZERO,
+            None
         )
         .unwrap();
         assert_eq!(
@@ -685,7 +692,8 @@ mod tests {
 
     #[test]
     fn parse_complex_logic() {
-        let str = lang::expr(r#"(true || false && false) && ((true || false) && true)"#, Pos::ZERO).unwrap();
+        let str = lang::expr(r#"(true || false && false) && ((true || false) && true)"#, Pos::ZERO
+        ).unwrap();
         assert_eq!(
             format!("{:?}", str),
             r#"BinOp(BinOp(Constant(Bool(true), Span { low: Pos(1), high: Pos(5) }), BinOp(Constant(Bool(false), Span { low: Pos(9), high: Pos(14) }), Constant(Bool(false), Span { low: Pos(18), high: Pos(23) }), LogicAnd, Span { low: Pos(9), high: Pos(23) }), LogicOr, Span { low: Pos(1), high: Pos(23) }), BinOp(BinOp(Constant(Bool(true), Span { low: Pos(30), high: Pos(34) }), Constant(Bool(false), Span { low: Pos(38), high: Pos(43) }), LogicOr, Span { low: Pos(30), high: Pos(43) }), Constant(Bool(true), Span { low: Pos(48), high: Pos(52) }), LogicAnd, Span { low: Pos(30), high: Pos(52) }), LogicAnd, Span { low: Pos(1), high: Pos(52) })"#

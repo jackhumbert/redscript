@@ -103,6 +103,10 @@ impl Definition {
         Definition::default(name, PoolIndex::UNDEFINED, AnyDefinition::Class(class))
     }
 
+    pub fn class_with_file(name: PoolIndex<CName>, file_idx: PoolIndex<Definition>, class: Class) -> Definition {
+        Definition::default(name, file_idx, AnyDefinition::Class(class))
+    }
+
     pub fn type_(name: PoolIndex<CName>, type_: Type) -> Definition {
         Definition::default(name, PoolIndex::UNDEFINED, AnyDefinition::Type(type_))
     }
@@ -121,6 +125,10 @@ impl Definition {
 
     pub fn enum_value(name: PoolIndex<CName>, parent: PoolIndex<Enum>, value: i64) -> Definition {
         Definition::default(name, parent.cast(), AnyDefinition::EnumValue(value))
+    }
+
+    pub fn source_file(source_file_: SourceFile) -> Definition {
+        Definition::default(PoolIndex::UNDEFINED, PoolIndex::UNDEFINED, AnyDefinition::SourceFile(source_file_))
     }
 }
 
@@ -562,17 +570,19 @@ impl Encode for Parameter {
 #[derive(Debug, Clone)]
 pub struct SourceFile {
     pub id: u32,
-    pub path_hash: u64,
+    pub path_hash_1: u32,
+    pub path_hash_2: u32,
     pub path: PathBuf,
 }
 
 impl Decode for SourceFile {
     fn decode<I: io::Read>(input: &mut I) -> io::Result<Self> {
         let id = input.decode()?;
-        let path_hash = input.decode()?;
+        let path_hash_1 = input.decode()?;
+        let path_hash_2 = input.decode()?;
         let raw_path = input.decode_str_prefixed::<u16>()?;
         let path = PathBuf::from(raw_path.replace('\\', "/"));
-        let result = SourceFile { id, path_hash, path };
+        let result = SourceFile { id, path_hash_1, path_hash_2, path };
         Ok(result)
     }
 }
@@ -580,7 +590,8 @@ impl Decode for SourceFile {
 impl Encode for SourceFile {
     fn encode<O: io::Write>(&self, output: &mut O) -> io::Result<()> {
         output.encode(&self.id)?;
-        output.encode(&self.path_hash)?;
+        output.encode(&self.path_hash_1)?;
+        output.encode(&self.path_hash_2)?;
         output.encode_str_prefixed::<u16>(&self.path.to_str().unwrap().replace('/', "\\"))
     }
 }

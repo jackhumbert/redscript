@@ -1,3 +1,4 @@
+#![feature(allocator_api)]
 pub mod assembler;
 pub mod cte;
 pub mod diagnostics;

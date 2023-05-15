@@ -104,17 +104,17 @@ fn main() -> ExitCode {
 
     let files = Files::from_dirs(&script_paths, &manifest.source_filter()).expect("Could not load script sources");
 
-    match compile_scripts(&scripts_dir, &bundle_path, fallback_dir.as_deref(), &files) {
+    match compile_scripts(&scripts_dir, &bundle_path, fallback_dir.as_deref(), files) {
         Ok(_) => {
             log::info!("Output successfully saved to {}", bundle_path.display());
             ExitCode::SUCCESS
         }
         Err(err) => {
-            let content = error_message(err, &files, r6_dir);
+            // let content = error_message(err, &files, r6_dir);
             #[cfg(feature = "popup")]
-            msgbox::create("Compilation error", &content, msgbox::IconType::Error).unwrap();
+            msgbox::create("Compilation error", &err, msgbox::IconType::Error).unwrap();
 
-            log::error!("Compilation error: {}", content);
+            log::error!("Compilation error: {}", err);
             ExitCode::FAILURE
         }
     }
@@ -151,7 +151,7 @@ fn compile_scripts(
     script_dir: &Path,
     bundle_path: &Path,
     fallback_cache_dir: Option<&Path>,
-    files: &Files,
+    files: Files,
 ) -> Result<(), Error> {
     let backup_path = bundle_path.with_extension(BACKUP_FILE_EXT);
     let fallback_backup_path = fallback_cache_dir.map(|dir| dir.join(BACKUP_FILE_NAME));
@@ -216,7 +216,7 @@ fn compile_scripts(
             files.display(script_dir)
         );
     }
-    CompilationUnit::new(&mut bundle.pool, vec![])?.compile_and_report(files)?;
+    CompilationUnit::new(&mut bundle.pool, vec![], files)?.compile_and_report()?;
     log::info!("Compilation complete");
 
     let mut file = File::create(bundle_path)?;
