@@ -1,21 +1,23 @@
 [workspace]
 members = ["core", "compiler", "decompiler", "cli", "scc"]
+resolver = "2"
 
 [workspace.package]
-version = "0.5.14"
+version = "0.5.16"
 authors = ["jekky"]
 edition = "2021"
 
 [workspace.dependencies]
 log = "0.4"
 thiserror = "1"
-hashbrown = "0.13"
-itertools = "0.10"
-strum = { version = "0.24", features = ["derive"] }
-enum-as-inner = "0.5"
+anyhow = "1"
+hashbrown = "0.14"
+itertools = "0.11"
+strum = { version = "0.25", features = ["derive"] }
+enum-as-inner = "0.6"
 byteorder = "1.4"
 flexstr = "0.9"
-flexi_logger = { version = "0.25", default-features = false }
+flexi_logger = { version = "0.27", default-features = false }
 
 [workspace.metadata.release]
 pre-release-commit-message = "chore: release {{version}}"

@@ -95,18 +95,20 @@ fn file_directory_orders(
     #[values(Some(4), None)] threads: Option<u8>,
     #[values(Some(false), None)] no_testonly: Option<bool>,
     #[values(Some(false), None)] no_breakpoint: Option<bool>,
+    #[values(Some(false), None)] no_exec: Option<bool>,
+    #[values(Some(false), None)] no_debug: Option<bool>,
     #[values(Some(true), Some(false), None)] profile: Option<bool>,
 ) {
 }
 
 #[test]
 fn get_help() {
-    println!(
-        "{}",
+    assert_eq!(
+        "not compile",
         Opts::get_parser()
             .run_inner(bpaf::Args::from(&["--help"]))
             .unwrap_err()
-            .unwrap_stdout()
+            .unwrap_stderr()
     );
 }
 
@@ -126,6 +128,8 @@ fn standard(
     threads: Option<u8>,
     no_testonly: Option<bool>,
     no_breakpoint: Option<bool>,
+    no_exec: Option<bool>,
+    no_debug: Option<bool>,
     profile: Option<bool>,
 ) {
     let mut args = Vec::<Arg>::new();
@@ -155,6 +159,12 @@ fn standard(
     if no_breakpoint == Some(true) {
         args.push("-no-breakpoint".into());
     }
+    if no_exec == Some(true) {
+        args.push("-no-exec".into());
+    }
+    if no_debug == Some(true) {
+        args.push("-no-debug".into());
+    }
     match profile {
         Some(false) => args.push("-profile=off".into()),
         Some(true) => args.push("-profile=on".into()),
@@ -175,7 +185,7 @@ fn standard(
     .unwrap();
     let opts = Opts::load(&fixed_args.iter().map(String::as_str).collect::<Vec<&str>>()).unwrap();
 
-    self::assert_eq!(opts.scripts_dir, Some(PathBuf::from(scripts_dir)));
+    self::assert_eq!(opts.scripts_dir, PathBuf::from(scripts_dir));
     self::assert_eq!(opts.cache_file, cache_file.map(|s| PathBuf::from(s)));
     self::assert_eq!(opts.cache_dir, cache_dir.map(|s| PathBuf::from(s)));
     self::assert_eq!(opts.script_paths_file, script_paths_file.map(|s| PathBuf::from(s)));
@@ -185,4 +195,6 @@ fn standard(
     self::assert_eq!(opts.no_breakpoint, no_breakpoint.unwrap_or(Opts::DEFAULT_NO_BREAKPOINT));
     self::assert_eq!(opts.profile, profile.unwrap_or(Opts::DEFAULT_NO_PROFILE));
     self::assert_eq!(opts.optimize, optimize.unwrap_or(Opts::DEFAULT_OPTIMIZE));
+    self::assert_eq!(opts.no_exec, no_exec.unwrap_or(Opts::DEFAULT_NO_EXEC));
+    self::assert_eq!(opts.no_debug, no_debug.unwrap_or(Opts::DEFAULT_NO_DEBUG));
 }

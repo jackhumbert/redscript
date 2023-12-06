@@ -44,12 +44,14 @@ pub fn fix_args(args: Vec<String>) -> Vec<String> {
         }
     }
 
+    fixed_args.retain(|s| !s.is_empty());
+
     fixed_args
 }
 
 #[derive(Clone, Debug)]
 pub struct Opts {
-    pub scripts_dir: Option<PathBuf>,
+    pub scripts_dir: PathBuf,
     pub cache_dir: Option<PathBuf>,
     pub optimize: bool,
     pub threads: u8,
@@ -59,10 +61,14 @@ pub struct Opts {
     pub profile: bool,
     pub script_paths_file: Option<PathBuf>,
     pub cache_file: Option<PathBuf>,
+    pub no_exec: bool,
+    pub no_debug: bool,
 }
 
 impl Opts {
     pub const DEFAULT_NO_BREAKPOINT: bool = false;
+    pub const DEFAULT_NO_DEBUG: bool = false;
+    pub const DEFAULT_NO_EXEC: bool = false;
     pub const DEFAULT_NO_PROFILE: bool = true;
     pub const DEFAULT_NO_TESTONLY: bool = false;
     pub const DEFAULT_OPTIMIZE: bool = false;
@@ -121,12 +127,12 @@ fn slong(name: &'static str, arg_name: &'static str, help: &'static str) -> impl
         .catch()
 }
 
-fn scripts_dir() -> impl Parser<Option<PathBuf>> {
+fn scripts_dir() -> impl Parser<PathBuf> {
     let tag = any::<String>("-compile")
         .help("Compile scripts to blob")
         .guard(|s| s == "-compile", "not compile");
     let value = positional::<PathBuf>("SCRIPT_PATH").guard(is_not_slong, "starts with -");
-    construct!(tag, value).adjacent().map(|pair| pair.1).optional().catch()
+    construct!(tag, value).adjacent().map(|pair| pair.1)
 }
 
 fn script_paths_file() -> impl Parser<Option<PathBuf>> {
@@ -159,6 +165,8 @@ impl Opts {
     pub fn get_parser() -> OptionParser<Opts> {
         let optimize = toggle_options("-optimize", "Enable optimiziations. Off by default")
             .map(|s| s.unwrap_or(Opts::DEFAULT_OPTIMIZE));
+        let no_exec = toggle_options("-no-exec", "Unknown").map(|s| s.unwrap_or(Opts::DEFAULT_NO_EXEC));
+        let no_debug = toggle_options("-no-debug", "Unknown").map(|s| s.unwrap_or(Opts::DEFAULT_NO_DEBUG));
         let threads = slong("-threads", "THREADS", "Set number of internal compilation threads")
             .parse(|s| s.map(|s| s.parse::<u8>()).unwrap_or(Ok(Opts::DEFAULT_THREADS)));
         let no_testonly = toggle_options("-no-testonly", "Skips testonly code. Off by default")
@@ -197,6 +205,8 @@ impl Opts {
             profile,
             script_paths_file(),
             cache_file,
+            no_exec,
+            no_debug
         });
         parser.to_options()
     }

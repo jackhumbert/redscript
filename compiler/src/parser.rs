@@ -212,7 +212,7 @@ peg::parser! {
             = quiet!{
                 x:$(['a'..='z' | 'A'..='Z' | '_']) xs:$(['0'..='9' | 'a'..='z' | 'A'..='Z' | '_']*)
                 { Ident::from(x) + xs }
-            } / expected!("identifier")
+            } / expected!("an identifier")
 
         rule keyword(id: &'static str) -> () =
             ##parse_string_literal(id) !['0'..='9' | 'a'..='z' | 'A'..='Z' | '_']
@@ -229,12 +229,12 @@ peg::parser! {
 
         rule escaped_char() -> char
             = !['\\' | '\"'] c:[_] { c }
-            / r#"\n"# { '\n' }
-            / r#"\r"# { '\r' }
-            / r#"\t"# { '\t' }
-            / r#"\'"# { '\'' }
+            / r"\n" { '\n' }
+            / r"\r" { '\r' }
+            / r"\t" { '\t' }
+            / r"\'" { '\'' }
             / r#"\""# { '\"' }
-            / r#"\\"# { '\\' }
+            / r"\\" { '\\' }
             / "\\u{" u:$(['a'..='f' | 'A'..='F' | '0'..='9']*<1,6>) "}" {
                 char::from_u32(u32::from_str_radix(u, 16).unwrap()).unwrap()
             }
@@ -246,7 +246,7 @@ peg::parser! {
             = "\"" s:string_contents() "\"" { s }
 
         rule interpolation() -> Expr<SourceAst>
-            = r#"\("# _ expr:expr() _ ")" { expr }
+            = r"\(" _ expr:expr() _ ")" { expr }
 
         rule string_part() -> (Expr<SourceAst>, Ref<str>)
             = e:interpolation() s:string_contents() { (e, Ref::from(s)) }
@@ -308,6 +308,7 @@ peg::parser! {
         rule member() -> MemberSource
             = fun:function() { MemberSource::Function(fun) }
             / field:field() { MemberSource::Field(field) }
+            / expected!("a method or a field")
 
         pub rule enum_() -> EnumSource
             = pos:pos() keyword("enum") _ name:ident() _ "{" _ members:commasep(<enum_member()>) _ ","? _ "}" end:pos()
@@ -328,6 +329,7 @@ peg::parser! {
             / struct_:struct_() { SourceEntry::Struct(struct_) }
             / field:field() { SourceEntry::GlobalLet(field) }
             / enum_:enum_() { SourceEntry::Enum(enum_) }
+            / expected!("a top-level definition")
 
         rule import() -> Import
             = pos:pos() annotations:(annotation() ** _) _ keyword("import") _ parts: dotsep(<ident()>) _ "." _ "*" end:pos()
@@ -375,11 +377,17 @@ peg::parser! {
             / for_: for_() { for_ }
             / if_: if_() { if_ }
             / switch: switch() { switch }
-            / pos:pos() keyword("breakpoint") _ ";" end:pos() { Expr::Breakpoint(Span::new(pos, end)) }
-            / pos:pos() keyword("return") _ val:expr()? _ ";" end:pos() { Expr::Return(val.map(Box::new), Span::new(pos, end)) }
-            / pos:pos() keyword("break") _ ";" end:pos() { Expr::Break(Span::new(pos, end)) }
+            / pos:pos() keyword("breakpoint") _ end_of_stmt() end:pos() { Expr::Breakpoint(Span::new(pos, end)) }
+            / pos:pos() keyword("return") _ val:expr()? _ end_of_stmt() end:pos() { Expr::Return(val.map(Box::new), Span::new(pos, end)) }
+            / pos:pos() keyword("break") _ end_of_stmt() end:pos() { Expr::Break(Span::new(pos, end)) }
+
             / let_:let() { let_ }
-            / expr:expr() _ ";" { expr }
+            / expr:expr() _ end_of_stmt() { expr }
+            / expected!("a statement")
+
+        rule end_of_stmt()
+            = ";"
+            / expected!("a semicolon terminating the statement")
 
         pub rule expr() -> Expr<SourceAst> = precedence!{
             x:@ _ "?" _ y:expr() _ ":" _ z:expr() {

@@ -439,11 +439,11 @@ impl<'a> Assembler<'a> {
         Ok(())
     }
 
-    fn is_rvalue_ref(expr: &Expr<TypedAst>, scope: &mut Scope, pool: &mut ConstantPool) -> Option<bool> {
+    fn is_rvalue_ref(expr: &Expr<TypedAst>, scope: &Scope, pool: &ConstantPool) -> Option<bool> {
         let typ = type_of(expr, scope, pool).ok()?;
         match typ {
             TypeId::ScriptRef(_) => match expr {
-                Expr::Call(Callable::Intrinsic(IntrinsicOp::AsRef, _), _, args, _) => match args.get(0) {
+                Expr::Call(Callable::Intrinsic(IntrinsicOp::AsRef, _), _, args, _) => match args.first() {
                     Some(expr) => Some(Self::is_rvalue(expr)),
                     _ => Some(true),
                 },
@@ -523,6 +523,12 @@ impl<'a> Assembler<'a> {
             }
             IntrinsicOp::ArrayLast => {
                 self.emit(Instr::ArrayLast(get_arg_type(0)?));
+            }
+            IntrinsicOp::ArraySort => {
+                self.emit(Instr::ArraySort(get_arg_type(0)?));
+            }
+            IntrinsicOp::ArraySortByPredicate => {
+                self.emit(Instr::ArraySortByPredicate(get_arg_type(0)?));
             }
             IntrinsicOp::ToString => match type_of(&args[0], scope, pool)? {
                 TypeId::Variant => self.emit(Instr::VariantToString),
