@@ -348,6 +348,7 @@ impl<'a> TypeChecker<'a> {
             Expr::This(span) => Expr::This(*span),
             Expr::Super(span) => Expr::Super(*span),
             Expr::Break(span) => Expr::Break(*span),
+            Expr::Breakpoint(span) => Expr::Breakpoint(*span),
             Expr::Null(span) => Expr::Null(*span),
         };
         Ok(res)
@@ -787,7 +788,8 @@ pub fn type_of(expr: &Expr<TypedAst>, scope: &Scope, pool: &ConstantPool) -> Res
         | Expr::ForIn(_, _, _, _)
         | Expr::Return(_, _)
         | Expr::Goto(_, _)
-        | Expr::Break(_) => TypeId::Void,
+        | Expr::Break(_)
+        | Expr::Breakpoint(_) => TypeId::Void,
     };
     Ok(res)
 }

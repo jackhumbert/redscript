@@ -200,6 +200,10 @@ where
         Ok(Expr::Break(pos))
     }
 
+    fn on_breakpoint(&mut self, pos: Span) -> Result<Expr<N>, Error> {
+        Ok(Expr::Breakpoint(pos))
+    }
+
     fn on_null(&mut self, pos: Span) -> Result<Expr<N>, Error> {
         Ok(Expr::Null(pos))
     }
@@ -231,6 +235,7 @@ where
             Expr::This(pos) => self.on_this(pos),
             Expr::Super(pos) => self.on_super(pos),
             Expr::Break(pos) => self.on_break(pos),
+            Expr::Breakpoint(pos) => self.on_breakpoint(pos),
             Expr::Null(pos) => self.on_null(pos),
         }
     }

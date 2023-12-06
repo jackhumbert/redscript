@@ -548,7 +548,7 @@ impl Encode for DefinitionHeader {
 
 #[derive(BitfieldSpecifier)]
 #[bits = 8]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DefinitionType {
     Type = 0,
     Class = 1,

@@ -1,5 +1,5 @@
 use std::iter;
-use std::path::Path;
+use std::path::PathBuf;
 
 use hashbrown::{HashMap, HashSet};
 use itertools::Itertools;
@@ -15,15 +15,27 @@ impl<'a> FileIndex<'a> {
     pub fn from_pool(pool: &'a ConstantPool) -> FileIndex<'a> {
         let mut file_map: HashMap<PoolIndex<SourceFile>, HashSet<PoolIndex<Definition>>> = HashMap::new();
 
+        // for (idx, def) in pool.definitions() {
+        //     if let Some(source) = def.source() {
+        //         let root_idx = if def.parent.is_undefined() { idx } else { def.parent };
+        //         file_map
+        //             .entry(source.file)
+        //             .and_modify(|vec| {
+        //                 vec.insert(root_idx);
+        //             })
+        //             .or_insert_with(|| iter::once(root_idx).collect());
+        //     }
+        // }
+
         for (idx, def) in pool.definitions() {
-            if let Some(source) = def.source() {
-                let root_idx = if def.parent.is_undefined() { idx } else { def.parent };
-                file_map
-                    .entry(source.file)
-                    .and_modify(|vec| {
-                        vec.insert(root_idx);
-                    })
-                    .or_insert_with(|| iter::once(root_idx).collect());
+           if def.parent != PoolIndex::UNDEFINED {
+            let source = def.parent.cast() as PoolIndex<SourceFile>;
+            file_map
+                .entry(source)
+                .and_modify(|vec| { 
+                    vec.insert(idx);
+                })
+                .or_insert_with(|| iter::once(idx).collect());
             }
         }
 
@@ -38,9 +50,9 @@ impl<'a> FileIndex<'a> {
                     .filter_map(|child| self.pool.definition(*child).ok())
                     .sorted_by_key(|def| def.first_line(self.pool).unwrap_or(0))
                     .collect();
-
+                let path = file.path.to_path_buf().with_extension("reds");
                 let entry = FileEntry {
-                    path: &file.path,
+                    path,
                     definitions,
                 };
                 Some(entry)
@@ -57,25 +69,21 @@ impl<'a> FileIndex<'a> {
             .pool
             .definitions()
             .filter(|(_, def)| match &def.value {
-                AnyDefinition::Class(class) => class
-                    .functions
-                    .iter()
-                    .filter_map(|idx| self.pool.function(*idx).ok())
-                    .all(|fun| fun.flags.is_native()),
-                AnyDefinition::Enum(_) => true,
-                AnyDefinition::Function(fun) if def.parent == PoolIndex::UNDEFINED && fun.flags.is_native() => true,
+                AnyDefinition::Class(_) if def.parent == PoolIndex::UNDEFINED => true,
+                AnyDefinition::Enum(_) if def.parent == PoolIndex::UNDEFINED => true,
+                AnyDefinition::Function(_) if def.parent == PoolIndex::UNDEFINED => true,
                 _ => false,
             })
             .map(|(_, def)| def)
             .collect();
         FileEntry {
-            path: Path::new("orphans.script"),
+            path: PathBuf::from("orphans.reds"),
             definitions,
         }
     }
 }
 
 pub struct FileEntry<'a> {
-    pub path: &'a Path,
+    pub path: PathBuf,
     pub definitions: Vec<&'a Definition>,
 }

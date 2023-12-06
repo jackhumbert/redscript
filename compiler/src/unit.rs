@@ -238,14 +238,16 @@ impl<'a> CompilationUnit<'a> {
                     }
                     Slot::Class {
                         index,
+                        parent,
                         source,
                         visibility,
-                    } => self.define_class(index, visibility, source, false, files, &mut module_scope),
+                    } => self.define_class(index, parent, visibility, source, false, files, &mut module_scope),
                     Slot::Struct {
                         index,
+                        parent,
                         source,
                         visibility,
-                    } => self.define_class(index, visibility, source, true, files, &mut module_scope),
+                    } => self.define_class(index, parent, visibility, source, true, files, &mut module_scope),
                     Slot::Field {
                         index,
                         source,
@@ -345,6 +347,7 @@ impl<'a> CompilationUnit<'a> {
 
                 let slot = Slot::Class {
                     index,
+                    parent: PoolIndex::UNDEFINED,
                     source,
                     visibility,
                 };
@@ -374,6 +377,7 @@ impl<'a> CompilationUnit<'a> {
 
                 let slot = Slot::Struct {
                     index,
+                    parent: PoolIndex::UNDEFINED,
                     source,
                     visibility,
                 };
@@ -420,6 +424,7 @@ impl<'a> CompilationUnit<'a> {
     fn define_class(
         &mut self,
         class_idx: PoolIndex<Class>,
+        parent_idx: PoolIndex<SourceFile>,
         visibility: Visibility,
         source: ClassSource,
         is_struct: bool,
@@ -509,7 +514,7 @@ impl<'a> CompilationUnit<'a> {
         };
         let name_idx = self.pool.definition(class_idx)?.name;
 
-        self.pool.put_definition(class_idx, Definition::class(name_idx, class));
+        self.pool.put_definition(class_idx, Definition::class(name_idx, parent_idx, class));
         Ok(())
     }
 
@@ -732,7 +737,8 @@ impl<'a> CompilationUnit<'a> {
         let file = self.file_map.entry_ref(loc.file.path()).or_insert_with(|| {
             let file = SourceFile {
                 id: count as u32,
-                path_hash: 0, // TODO: consider hashing the path
+                murmur: (count + 1903) as u32, // TODO: consider hashing the path
+                hash: 0,
                 path: loc.file.path().to_owned(),
             };
             self.pool.add_definition(Definition::source_file(file))
@@ -1204,11 +1210,13 @@ enum Slot {
     },
     Class {
         index: PoolIndex<Class>,
+        parent: PoolIndex<SourceFile>,
         source: ClassSource,
         visibility: Visibility,
     },
     Struct {
         index: PoolIndex<Class>,
+        parent: PoolIndex<SourceFile>,
         source: ClassSource,
         visibility: Visibility,
     },

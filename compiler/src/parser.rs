@@ -375,6 +375,7 @@ peg::parser! {
             / for_: for_() { for_ }
             / if_: if_() { if_ }
             / switch: switch() { switch }
+            / pos:pos() keyword("breakpoint") _ ";" end:pos() { Expr::Breakpoint(Span::new(pos, end)) }
             / pos:pos() keyword("return") _ val:expr()? _ ";" end:pos() { Expr::Return(val.map(Box::new), Span::new(pos, end)) }
             / pos:pos() keyword("break") _ ";" end:pos() { Expr::Break(Span::new(pos, end)) }
             / let_:let() { let_ }

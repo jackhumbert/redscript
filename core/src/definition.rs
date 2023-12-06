@@ -99,16 +99,16 @@ impl Definition {
         Definition::default(name, parent.cast(), AnyDefinition::Parameter(param))
     }
 
-    pub fn class(name: PoolIndex<CName>, class: Class) -> Definition {
-        Definition::default(name, PoolIndex::UNDEFINED, AnyDefinition::Class(class))
+    pub fn class(name: PoolIndex<CName>, parent: PoolIndex<SourceFile>, class: Class) -> Definition {
+        Definition::default(name, parent.cast(), AnyDefinition::Class(class))
     }
 
     pub fn type_(name: PoolIndex<CName>, type_: Type) -> Definition {
         Definition::default(name, PoolIndex::UNDEFINED, AnyDefinition::Type(type_))
     }
 
-    pub fn function(name: PoolIndex<CName>, parent: PoolIndex<Class>, fun: Function) -> Definition {
-        Definition::default(name, parent.cast(), AnyDefinition::Function(fun))
+    pub fn function(name: PoolIndex<CName>, parent: PoolIndex<Definition>, fun: Function) -> Definition {
+        Definition::default(name, parent, AnyDefinition::Function(fun))
     }
 
     pub fn field(name: PoolIndex<CName>, parent: PoolIndex<Class>, field: Field) -> Definition {
@@ -570,17 +570,19 @@ impl Encode for Parameter {
 #[derive(Debug, Clone)]
 pub struct SourceFile {
     pub id: u32,
-    pub path_hash: u64,
+    pub murmur: u32,
+    pub hash: u32,
     pub path: PathBuf,
 }
 
 impl Decode for SourceFile {
     fn decode<I: io::Read>(input: &mut I) -> io::Result<Self> {
         let id = input.decode()?;
-        let path_hash = input.decode()?;
+        let murmur = input.decode()?;
+        let hash = input.decode()?;
         let raw_path = input.decode_str_prefixed::<u16>()?;
         let path = PathBuf::from(raw_path.replace('\\', "/"));
-        let result = SourceFile { id, path_hash, path };
+        let result = SourceFile { id, murmur, hash, path };
         Ok(result)
     }
 }
@@ -588,7 +590,8 @@ impl Decode for SourceFile {
 impl Encode for SourceFile {
     fn encode<O: io::Write>(&self, output: &mut O) -> io::Result<()> {
         output.encode(&self.id)?;
-        output.encode(&self.path_hash)?;
+        output.encode(&self.murmur)?;
+        output.encode(&self.hash)?;
         output.encode_str_prefixed::<u16>(&self.path.to_str().unwrap().replace('/', "\\"))
     }
 }
@@ -705,6 +708,7 @@ pub struct FunctionFlags {
     pub unk1: bool,
     pub is_callback: bool,
     pub is_operator: bool,
+
     pub has_return_value: bool,
     pub has_base_method: bool,
     pub has_parameters: bool,

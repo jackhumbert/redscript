@@ -47,6 +47,7 @@ where
     This(Span),
     Super(Span),
     Break(Span),
+    Breakpoint(Span),
     Null(Span),
 }
 
@@ -116,6 +117,7 @@ where
             | Expr::This(span)
             | Expr::Super(span)
             | Expr::Break(span)
+            | Expr::Breakpoint(span)
             | Expr::Null(span) => *span,
             Expr::Seq(seq) => {
                 let start = seq.exprs.first().map(Self::span).unwrap_or_default();

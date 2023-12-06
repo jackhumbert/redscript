@@ -860,6 +860,19 @@ pub struct Breakpoint {
     padding: u64,
 }
 
+impl Breakpoint {
+    pub fn new() -> Breakpoint {
+        Breakpoint {
+            line: 0,
+            line_start: 0,
+            col: 0,
+            length: 0,
+            enabled: true,
+            padding: 0,
+        }
+    }
+}
+
 impl Decode for Breakpoint {
     fn decode<I: io::Read>(input: &mut I) -> io::Result<Self> {
         let line = input.decode()?;

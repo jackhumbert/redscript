@@ -9,6 +9,19 @@
 			],
 			"group": "build",
 			"label": "rust: cargo build"
+		},
+		{
+			"type": "cargo",
+			"command": "build",
+			"problemMatcher": [
+				"$rustc",
+				"$rust-panic"
+			],
+			"args": [
+				"--release"
+			],
+			"group": "build",
+			"label": "rust: cargo build release"
 		}
 	]
 }

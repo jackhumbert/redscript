@@ -290,6 +290,9 @@ impl<'a> Assembler<'a> {
             Expr::Break(_) if exit.is_some() => {
                 self.emit(Instr::Jump(exit.unwrap()));
             }
+            Expr::Breakpoint(_) => {
+                self.emit(Instr::Breakpoint(Box::new(redscript::bytecode::Breakpoint::new())));
+            }
             Expr::ArrayLit(_, _, span) => return Err(Cause::UnsupportedFeature("ArrayLit").with_span(span)),
             Expr::InterpolatedString(_, _, span) => {
                 return Err(Cause::UnsupportedFeature("InterpolatedString").with_span(span))

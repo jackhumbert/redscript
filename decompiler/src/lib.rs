@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use error::Error;
 use redscript::ast::{Constant, Expr, Ident, Literal, Seq, SourceAst, Span, SwitchCase, Target, TypeName};
-use redscript::bundle::{ConstantPool, PoolIndex};
+use redscript::bundle::{ConstantPool, PoolIndex, DefinitionType};
 use redscript::bytecode::{CodeCursor, CursorError, Instr, IntrinsicOp, Location, Offset};
 use redscript::definition::Function;
 
@@ -14,6 +14,11 @@ pub struct Decompiler<'a> {
     code: CodeCursor<'a, Offset>,
     pool: &'a ConstantPool,
     base_method: Option<PoolIndex<Function>>,
+}
+
+#[no_mangle]
+pub extern fn Decompile(byte_p: &u8) -> &u8 {
+    byte_p
 }
 
 impl<'a> Decompiler<'a> {
@@ -302,7 +307,7 @@ impl<'a> Decompiler<'a> {
                 if let Some(ctx) = context {
                     Expr::MethodCall(Box::new(ctx), name, params, Span::ZERO)
                 } else if fun.flags.is_static() {
-                    if def.parent.is_undefined() {
+                    if def.parent.is_undefined() || self.pool.definition(def.parent).unwrap().value.type_() == DefinitionType::SourceFile {
                         if name.as_ref().starts_with("Cast;") {
                             let ret_type = fun
                                 .return_type
