@@ -1,11 +1,12 @@
 use std::fs;
 use std::fs::{File, OpenOptions};
+use std::path::Path;
 use std::process::Command;
 
 use assert_cmd::prelude::*;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
-use scc::timestamp::*;
+use scc_lib::timestamp::*;
 
 #[test]
 fn no_args() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,41 +27,39 @@ fn help() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn bundle_result() -> Result<(), Box<dyn std::error::Error>> {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let scc_dir = std::env::current_dir().unwrap();
-    let project_dir = scc_dir.parent().unwrap();
+    let temp = assert_fs::TempDir::new()?;
 
-    let predef = project_dir.join("resources/predef.redscripts");
-    let predef_cmp = project_dir.join("resources/predef.redscripts.cmp");
+    let predef = Path::new("../../resources/predef.redscripts");
+    let predef_cmp = Path::new("../../resources/predef.redscripts.cmp");
     let bundle_path = temp.child("final.redscripts");
     fs::copy(predef, &bundle_path).expect("should copy predef.redscripts to bundle path");
 
-    let script_file = temp.child("test.reds");
+    let script_file = temp.child("scripts/test.reds");
     script_file.write_str("class TestClass {}")?;
 
     let mut cmd = Command::cargo_bin("scc")?;
-    cmd.arg("-compile").arg(script_file.path()).arg(bundle_path.path());
+    cmd.arg("-compile")
+        .arg(temp.child("scripts").path())
+        .arg(bundle_path.path());
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("Output successfully saved"));
 
-    bundle_path.assert(predicate::path::eq_file(predef_cmp.as_path()));
-    temp.close().unwrap();
+    bundle_path.assert(predicate::path::eq_file(predef_cmp));
+    temp.close()?;
     Ok(())
 }
 
 #[test]
 fn timestamp_migration() -> Result<(), Box<dyn std::error::Error>> {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let scc_dir = std::env::current_dir().unwrap();
-    let project_dir = scc_dir.parent().unwrap();
+    let temp = assert_fs::TempDir::new()?;
 
-    let predef = project_dir.join("resources/predef.redscripts");
+    let predef = Path::new("../../resources/predef.redscripts");
     let bundle_path = temp.child("final.redscripts");
     let backup_path = temp.child("final.redscripts.bk");
     let new_ts_path = temp.child("final.redscripts.ts");
-    fs::copy(&predef, &bundle_path).expect("Could not copy predef.redscripts to bundle path");
-    fs::copy(&predef, &backup_path).expect("Could not copy predef.redscripts to backup path");
+    fs::copy(predef, &bundle_path).expect("Could not copy predef.redscripts to bundle path");
+    fs::copy(predef, backup_path).expect("Could not copy predef.redscripts to backup path");
 
     let ts_path = temp.child("redscript.ts");
     let bundle_file = File::open(&bundle_path)?;
@@ -82,6 +81,6 @@ fn timestamp_migration() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!ts_path.exists(), "Old timestamp file still exists");
     assert!(new_ts_path.exists(), "New timestamp file doesn't exist");
 
-    temp.close().unwrap();
+    temp.close()?;
     Ok(())
 }

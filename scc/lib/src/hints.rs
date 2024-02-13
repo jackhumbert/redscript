@@ -8,16 +8,26 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct UserHint {
-    pub id: String,
-    pub message: String,
-    pub file: Option<PathBuf>,
-    pub span_starts_with: Option<String>,
-    pub line_contains: Option<String>,
+    id: String,
+    message: String,
+    file: Option<PathBuf>,
+    span_starts_with: Option<String>,
+    line_contains: Option<String>,
+}
+
+impl UserHint {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct UserHints {
-    pub hints: HashMap<String, Vec<UserHint>>,
+    hints: HashMap<String, Vec<UserHint>>,
 }
 
 impl UserHints {
@@ -42,9 +52,15 @@ impl UserHints {
         Ok(Self { hints })
     }
 
-    pub fn get_by_error(&self, error_code: &str, path: &Path, source: &str, source_line: &str) -> Option<&UserHint> {
+    pub fn get_by_error(
+        &self,
+        error_code: &str,
+        path: Option<&Path>,
+        source: &str,
+        source_line: &str,
+    ) -> Option<&UserHint> {
         self.hints.get(error_code)?.iter().find(|a| {
-            a.file.as_ref().map_or(true, |p| p == path)
+            a.file.as_ref().map_or(true, |p| Some(p.as_path()) == path)
                 && (matches!(&a.span_starts_with, Some(str) if source.starts_with(str))
                     || matches!(&a.line_contains, Some(str) if source_line.contains(str)))
         })

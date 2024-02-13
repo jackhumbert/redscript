@@ -1,0 +1,20 @@
+[package]
+name = "scc"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+scc-lib = { path = "../lib" }
+anyhow.workspace = true
+bpaf = "0.7"
+minidl = "0.1"
+
+[dev-dependencies]
+winsplit = "0.1"
+rstest = "0.18"
+rstest_reuse = "0.6"
+pretty_assertions = "1"
+
+[lints]
+workspace = true

@@ -107,7 +107,7 @@ macro_rules! match_index {
 macro_rules! check_code {
     [$($check:expr),*] => {
         |code: Code<Offset>, ctx: &mut TestContext| {
-            let mut instrs = code.0.into_iter();
+            let mut instrs = code.iter().map(|(_, i)| i);
             $($check(instrs.next().expect("Not enough instructions"), ctx);)*
         }
     }
@@ -121,7 +121,7 @@ pub fn compiled(sources: Vec<&str>) -> Result<(ConstantPool, Vec<Diagnostic>), E
     let mut scripts = ScriptBundle::load(&mut Cursor::new(PREDEF))?;
     let res = CompilationUnit::new_with_defaults(&mut scripts.pool)?.compile(modules, &Files::default())?;
 
-    Ok((scripts.pool, res))
+    Ok((scripts.pool, res.into_diagnostics()))
 }
 
 pub fn check_class_flags(pool: &ConstantPool, name: &str, flags: ClassFlags) -> Result<(), Error> {

@@ -2,17 +2,19 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use hashbrown::{HashMap, HashSet};
-use redscript::ast::{Constant, Expr, Ident, Literal, Seq, SourceAst, Span, TypeName};
+use redscript::ast::{Constant, Expr, Ident, Literal, Pos, Seq, SourceAst, Span, TypeName};
 use redscript::bundle::{ConstantPool, PoolIndex};
 use redscript::bytecode::{Code, Instr};
 use redscript::definition::*;
-use redscript::mapper::{MultiMapper, PoolMapper};
+use redscript::mapper::{Mapper, MultiMapper, PoolMapper};
 use redscript::Ref;
 
 use crate::assembler::Assembler;
 use crate::cte;
-use crate::diagnostics::return_val::ReturnValueCheck;
-use crate::diagnostics::unused::UnusedCheck;
+use crate::diagnostics::invalid_temp_use::InvalidUseOfTemporaryCheck;
+use crate::diagnostics::missing_return::MissingReturnCheck;
+use crate::diagnostics::stmt_fallthrough::StatementFallthroughCheck;
+use crate::diagnostics::unused_local::UnusedLocalCheck;
 use crate::diagnostics::{Diagnostic, DiagnosticPass, FunctionMetadata};
 use crate::error::{Cause, Error, ResultSpan};
 use crate::parser::*;
@@ -25,6 +27,7 @@ use crate::typechecker::{collect_supertypes, Callable, TypeChecker, TypedAst};
 
 type ProxyMap = HashMap<PoolIndex<Function>, PoolIndex<Function>>;
 
+#[derive(Debug)]
 pub struct CompilationUnit<'a> {
     pool: &'a mut ConstantPool,
     symbols: SymbolMap,
@@ -33,6 +36,7 @@ pub struct CompilationUnit<'a> {
     field_defaults: Vec<FieldDefault>,
     wrappers: ProxyMap,
     proxies: ProxyMap,
+    source_refs: Vec<SourceRef>,
     diagnostics: Vec<Diagnostic>,
     file_map: HashMap<PathBuf, PoolIndex<SourceFile>>,
     diagnostic_passes: Vec<Box<dyn DiagnosticPass + Send>>,
@@ -40,7 +44,12 @@ pub struct CompilationUnit<'a> {
 
 impl<'a> CompilationUnit<'a> {
     pub fn new_with_defaults(pool: &'a mut ConstantPool) -> Result<Self, Error> {
-        let passes: Vec<Box<dyn DiagnosticPass + Send>> = vec![Box::new(UnusedCheck), Box::new(ReturnValueCheck)];
+        let passes: Vec<Box<dyn DiagnosticPass + Send>> = vec![
+            Box::new(UnusedLocalCheck),
+            Box::new(MissingReturnCheck),
+            Box::new(StatementFallthroughCheck),
+            Box::new(InvalidUseOfTemporaryCheck),
+        ];
         Self::new(pool, passes)
     }
 
@@ -58,22 +67,23 @@ impl<'a> CompilationUnit<'a> {
             pool,
             symbols,
             scope,
-            function_bodies: Vec::new(),
-            field_defaults: Vec::new(),
+            function_bodies: vec![],
+            field_defaults: vec![],
             wrappers: HashMap::new(),
             proxies: HashMap::new(),
+            source_refs: vec![],
             diagnostics: vec![],
             file_map: HashMap::new(),
             diagnostic_passes: passes,
         })
     }
 
-    pub fn compile(mut self, modules: Vec<SourceModule>, files: &Files) -> Result<Vec<Diagnostic>, Error> {
+    pub fn compile(mut self, modules: Vec<SourceModule>, files: &Files) -> Result<CompilationOutput, Error> {
         let funcs = self.compile_modules(modules, files, true, false)?;
         self.finish(funcs, files)
     }
 
-    pub fn compile_files(self, files: &Files) -> Result<Vec<Diagnostic>, Error> {
+    pub fn compile_files(self, files: &Files) -> Result<CompilationOutput, Error> {
         self.compile(Self::parse(files)?, files)
     }
 
@@ -83,49 +93,42 @@ impl<'a> CompilationUnit<'a> {
         files: &Files,
         desugar: bool,
         permissive: bool,
-    ) -> Result<(Vec<CompiledFunction>, Vec<Diagnostic>), Error> {
-        let funcs = self.compile_modules(modules, files, desugar, permissive)?;
-        Ok((funcs, self.diagnostics))
+    ) -> Result<TypecheckOutput, Error> {
+        let functions = self.compile_modules(modules, files, desugar, permissive)?;
+        Ok(TypecheckOutput {
+            functions,
+            diagnostics: self.diagnostics,
+            source_refs: self.source_refs,
+        })
     }
 
-    pub fn typecheck_files(
-        self,
-        files: &Files,
-        desugar: bool,
-        permissive: bool,
-    ) -> Result<(Vec<CompiledFunction>, Vec<Diagnostic>), Error> {
+    pub fn typecheck_files(self, files: &Files, desugar: bool, permissive: bool) -> Result<TypecheckOutput, Error> {
         self.typecheck(Self::parse(files)?, files, desugar, permissive)
     }
 
-    pub fn compile_and_report(self, files: &Files) -> Result<(), Error> {
+    pub fn compile_and_report(self, files: &Files) -> Result<CompilationOutput, Error> {
         match self.compile_files(files) {
-            Ok(mut diagnostics) => {
-                diagnostics.sort_by_key(Diagnostic::is_fatal);
-
-                for diagnostic in &diagnostics {
+            Ok(output) => {
+                for diagnostic in &output.diagnostics {
                     diagnostic.log(files);
                 }
 
-                if diagnostics.iter().any(Diagnostic::is_fatal) {
-                    let spans = diagnostics
+                if output.diagnostics.iter().any(Diagnostic::is_fatal) {
+                    let spans = output
+                        .diagnostics
                         .iter()
                         .filter(|d| d.is_fatal())
                         .map(|d| (d.code(), d.span()))
                         .collect();
                     Err(Error::MultipleErrors(spans))
                 } else {
-                    Ok(())
+                    Ok(output)
                 }
             }
             Err(err) => match Diagnostic::from_error(err) {
                 Ok(diagnostic) => {
                     diagnostic.log(files);
-
-                    if diagnostic.is_fatal() {
-                        Err(Error::MultipleErrors(vec![(diagnostic.code(), diagnostic.span())]))
-                    } else {
-                        Ok(())
-                    }
+                    Err(Error::MultipleErrors(vec![(diagnostic.code(), diagnostic.span())]))
                 }
                 Err(other) => {
                     log::error!("{}: {}", "Unexpected error during compilation", other);
@@ -212,7 +215,7 @@ impl<'a> CompilationUnit<'a> {
                     } => {
                         let pos = source.declaration.span;
                         if seen_funcs.contains(&index) {
-                            self.diagnostics.push(Diagnostic::MethodConflict(index, pos));
+                            self.diagnostics.push(Diagnostic::ReplaceMethodConflict(index, pos));
                         } else {
                             seen_funcs.insert(index);
                         }
@@ -241,13 +244,13 @@ impl<'a> CompilationUnit<'a> {
                         parent,
                         source,
                         visibility,
-                    } => self.define_class(index, parent, visibility, source, false, files, &mut module_scope),
+                    } => self.define_class(index, parent, visibility, source, false, files, &mut module_scope, &cte),
                     Slot::Struct {
                         index,
                         parent,
                         source,
                         visibility,
-                    } => self.define_class(index, parent, visibility, source, true, files, &mut module_scope),
+                    } => self.define_class(index, parent, visibility, source, true, files, &mut module_scope, &cte),
                     Slot::Field {
                         index,
                         source,
@@ -294,7 +297,7 @@ impl<'a> CompilationUnit<'a> {
         Ok(compiled_funcs)
     }
 
-    fn finish(self, functions: Vec<CompiledFunction>, files: &Files) -> Result<Vec<Diagnostic>, Error> {
+    fn finish(self, functions: Vec<CompiledFunction>, files: &Files) -> Result<CompilationOutput, Error> {
         for mut func in functions {
             let code = Assembler::from_body(func.code, files, &mut func.scope, self.pool)?;
             let function = self.pool.function_mut(func.index)?;
@@ -317,8 +320,16 @@ impl<'a> CompilationUnit<'a> {
             self.pool.swap_definition(wrapped, proxy);
         }
 
-        Self::cleanup_pool(self.pool);
-        Ok(self.diagnostics)
+        let mut diagnostics = self.diagnostics;
+        diagnostics.sort_by_key(Diagnostic::is_fatal);
+        let mut source_refs = self.source_refs;
+
+        Self::cleanup_pool(self.pool, &mut source_refs);
+
+        Ok(CompilationOutput {
+            diagnostics,
+            source_refs,
+        })
     }
 
     fn define_symbol(&mut self, entry: SourceEntry, module: &ModulePath, permissive: bool) -> Result<Slot, Error> {
@@ -421,6 +432,7 @@ impl<'a> CompilationUnit<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn define_class(
         &mut self,
         class_idx: PoolIndex<Class>,
@@ -430,6 +442,7 @@ impl<'a> CompilationUnit<'a> {
         is_struct: bool,
         files: &Files,
         scope: &mut Scope,
+        ctx: &cte::Context,
     ) -> Result<(), Error> {
         let is_import_only = source.qualifiers.contain(Qualifier::ImportOnly);
         let is_class_native = is_import_only || source.qualifiers.contain(Qualifier::Native);
@@ -448,6 +461,10 @@ impl<'a> CompilationUnit<'a> {
         for member in source.members {
             match member {
                 MemberSource::Function(fun) => {
+                    if !eval_conditions(ctx, &fun.declaration.annotations)? {
+                        continue;
+                    }
+
                     if is_struct && !fun.declaration.qualifiers.contain(Qualifier::Static) {
                         let err = Cause::UnsupportedFeature("defining non-static struct methods")
                             .with_span(fun.declaration.span);
@@ -476,6 +493,10 @@ impl<'a> CompilationUnit<'a> {
                     functions.push(fun_idx);
                 }
                 MemberSource::Field(let_) => {
+                    if !eval_conditions(ctx, &let_.declaration.annotations)? {
+                        continue;
+                    }
+
                     let name_idx = self.pool.names.add(let_.declaration.name.to_heap());
                     let field_idx = self.pool.stub_definition(name_idx);
 
@@ -515,6 +536,7 @@ impl<'a> CompilationUnit<'a> {
         let name_idx = self.pool.definition(class_idx)?.name;
 
         self.pool.put_definition(class_idx, Definition::class(name_idx, parent_idx, class));
+        self.source_refs.push(SourceRef::new(class_idx.cast(), source.span.low));
         Ok(())
     }
 
@@ -603,6 +625,8 @@ impl<'a> CompilationUnit<'a> {
         }
 
         self.pool.put_definition(spec.fun_idx, definition);
+        self.source_refs
+            .push(SourceRef::new(spec.fun_idx.cast(), spec.source.span.low));
         Ok(())
     }
 
@@ -662,8 +686,8 @@ impl<'a> CompilationUnit<'a> {
             attributes,
             defaults: vec![],
         };
-        let name_index = self.pool.definition(field_idx)?.name;
-        let definition = Definition::field(name_index, class_idx.cast(), field);
+        let name = self.pool.definition(field_idx)?.name;
+        let definition = Definition::field(name, class_idx.cast(), field);
 
         if let Some(value) = source.default {
             self.field_defaults.push(FieldDefault {
@@ -675,6 +699,7 @@ impl<'a> CompilationUnit<'a> {
         }
 
         self.pool.put_definition(field_idx, definition);
+        self.source_refs.push(SourceRef::new(field_idx.cast(), decl.span.low));
         Ok(())
     }
 
@@ -695,6 +720,7 @@ impl<'a> CompilationUnit<'a> {
         };
         let name_index = self.pool.definition(index)?.name;
         self.pool.put_definition(index, Definition::enum_(name_index, enum_));
+        self.source_refs.push(SourceRef::new(index.cast(), source.span.low));
         Ok(())
     }
 
@@ -773,12 +799,20 @@ impl<'a> CompilationUnit<'a> {
                         Symbol::Struct(idx, _) | Symbol::Class(idx, _) => idx,
                         _ => return Err(Cause::ClassNotFound(class_name.clone()).with_span(ann.span)),
                     };
-                    let fun_idx = self
+                    let candidates = self
                         .scope
-                        .resolve_method(name.clone(), target_class_idx, self.pool)
-                        .with_span(ann.span)?
-                        .by_id(&sig, self.pool)
-                        .ok_or_else(|| Cause::MethodNotFound(name, class_name.clone()).with_span(ann.span))?;
+                        .resolve_direct_method(name.clone(), target_class_idx, self.pool)
+                        .ok();
+                    let fun_idx = candidates
+                        .as_ref()
+                        .and_then(|cd| cd.by_id(&sig, self.pool))
+                        .ok_or_else(|| {
+                            if candidates.is_some() {
+                                Cause::NoMethodWithMatchingSignature.with_span(ann.span)
+                            } else {
+                                Cause::NoMethodWithMatchingName.with_span(ann.span)
+                            }
+                        })?;
 
                     let wrapped_idx = if let Some(wrapped) = self.wrappers.get(&fun_idx) {
                         *wrapped
@@ -816,12 +850,21 @@ impl<'a> CompilationUnit<'a> {
                         Symbol::Struct(idx, _) | Symbol::Class(idx, _) => idx,
                         _ => return Err(Cause::ClassNotFound(class_name.clone()).with_span(ann.span)),
                     };
-                    let fun_idx = self
+                    let candidates = self
                         .scope
-                        .resolve_method(name.clone(), target_class_idx, self.pool)
-                        .with_span(ann.span)?
-                        .by_id(&sig, self.pool)
-                        .ok_or_else(|| Cause::MethodNotFound(name, class_name.clone()).with_span(ann.span))?;
+                        .resolve_direct_method(name.clone(), target_class_idx, self.pool)
+                        .ok();
+                    let fun_idx = candidates
+                        .as_ref()
+                        .and_then(|cd| cd.by_id(&sig, self.pool))
+                        .ok_or_else(|| {
+                            if candidates.is_some() {
+                                Cause::NoMethodWithMatchingSignature.with_span(ann.span)
+                            } else {
+                                Cause::NoMethodWithMatchingName.with_span(ann.span)
+                            }
+                        })?;
+
                     let base = self.pool.function(fun_idx).ok().and_then(|fun| fun.base_method);
                     let slot = Slot::Function {
                         index: fun_idx,
@@ -863,6 +906,17 @@ impl<'a> CompilationUnit<'a> {
                         Symbol::Struct(idx, _) | Symbol::Class(idx, _) => idx,
                         _ => return Err(Cause::ClassNotFound(class_name.clone()).with_span(ann.span)),
                     };
+
+                    if self
+                        .scope
+                        .resolve_direct_method(name.clone(), target_class_idx, self.pool)
+                        .ok()
+                        .and_then(|cd| cd.by_id(&sig, self.pool))
+                        .is_some()
+                    {
+                        self.diagnostics.push(Diagnostic::AddMethodConflict(ann.span));
+                    }
+
                     let class = self.pool.class(target_class_idx)?;
                     let base_method = if class.base != PoolIndex::UNDEFINED {
                         let base = self.pool.class(class.base)?;
@@ -1069,7 +1123,7 @@ impl<'a> CompilationUnit<'a> {
         let fun = pool.function_mut(target)?;
         fun.locals = mapped_locals.values().copied().collect();
 
-        for instr in &mut fun.code.0 {
+        for instr in fun.code.as_mut() {
             if let Instr::Local(local) = instr {
                 *instr = Instr::Local(*mapped_locals.get(local).unwrap());
             }
@@ -1079,7 +1133,7 @@ impl<'a> CompilationUnit<'a> {
 
     // this method is a workaround for a game crash which happens when the game loads
     // a class which has a base class that is placed after the subclass in the pool
-    fn cleanup_pool(pool: &mut ConstantPool) {
+    fn cleanup_pool(pool: &mut ConstantPool, refs: &mut [SourceRef]) {
         fn collect_subtypes(
             class_idx: PoolIndex<Class>,
             hierarchy: &HashMap<PoolIndex<Class>, Vec<PoolIndex<Class>>>,
@@ -1149,9 +1203,11 @@ impl<'a> CompilationUnit<'a> {
         // fix any references to the reordered classes
         if !unsorted.is_empty() {
             let mappings = sorted.into_iter().zip(unsorted).collect();
-            PoolMapper::default()
-                .with_class_mapper(MultiMapper::new(mappings))
-                .map(pool);
+            let mapper = MultiMapper::new(mappings);
+            for ref_ in refs {
+                ref_.index = mapper.apply(ref_.index.cast()).cast();
+            }
+            PoolMapper::default().with_class_mapper(mapper).map(pool);
         }
     }
 
@@ -1172,6 +1228,7 @@ impl<'a> CompilationUnit<'a> {
     }
 }
 
+#[derive(Debug)]
 struct FunctionBody {
     class: PoolIndex<Class>,
     index: PoolIndex<Function>,
@@ -1182,6 +1239,7 @@ struct FunctionBody {
     span: Span,
 }
 
+#[derive(Debug)]
 struct FieldDefault {
     class: PoolIndex<Class>,
     index: PoolIndex<Field>,
@@ -1189,6 +1247,7 @@ struct FieldDefault {
     scope: Scope,
 }
 
+#[derive(Debug)]
 pub struct CompiledFunction {
     pub index: PoolIndex<Function>,
     pub code: Seq<TypedAst>,
@@ -1197,6 +1256,7 @@ pub struct CompiledFunction {
     pub span: Span,
 }
 
+#[derive(Debug)]
 enum Slot {
     Function {
         index: PoolIndex<Function>,
@@ -1254,4 +1314,65 @@ fn eval_conditions(cte: &cte::Context, anns: &[Annotation]) -> Result<bool, Erro
                 .ok_or_else(|| Error::CteError("invalid value", expr.span()))?;
             Ok(acc && *res)
         })
+}
+
+#[derive(Debug, Default)]
+pub struct CompilationOutput {
+    diagnostics: Vec<Diagnostic>,
+    source_refs: Vec<SourceRef>,
+}
+
+impl CompilationOutput {
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    pub fn source_refs(&self) -> &[SourceRef] {
+        &self.source_refs
+    }
+
+    pub fn into_diagnostics(self) -> Vec<Diagnostic> {
+        self.diagnostics
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct TypecheckOutput {
+    functions: Vec<CompiledFunction>,
+    diagnostics: Vec<Diagnostic>,
+    source_refs: Vec<SourceRef>,
+}
+
+impl TypecheckOutput {
+    pub fn functions(&self) -> &[CompiledFunction] {
+        &self.functions
+    }
+
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    pub fn source_refs(&self) -> &[SourceRef] {
+        &self.source_refs
+    }
+}
+
+#[derive(Debug)]
+pub struct SourceRef {
+    index: PoolIndex<Definition>,
+    pos: Pos,
+}
+
+impl SourceRef {
+    pub fn new(index: PoolIndex<Definition>, pos: Pos) -> Self {
+        Self { index, pos }
+    }
+
+    pub fn index(&self) -> PoolIndex<Definition> {
+        self.index
+    }
+
+    pub fn pos(&self) -> Pos {
+        self.pos
+    }
 }

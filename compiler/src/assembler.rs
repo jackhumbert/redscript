@@ -8,7 +8,7 @@ use crate::error::{Cause, Error, ResultSpan};
 use crate::scope::{Reference, Scope, TypeId, Value};
 use crate::source_map::Files;
 use crate::symbol::Symbol;
-use crate::typechecker::{type_of, Callable, Member, TypedAst};
+use crate::typechecker::{type_of, Callable, Member, TypedAst, TypedExpr, TypedExprExt};
 
 pub struct Assembler<'a> {
     files: &'a Files,
@@ -44,7 +44,7 @@ impl<'a> Assembler<'a> {
 
     fn assemble(
         &mut self,
-        expr: Expr<TypedAst>,
+        expr: TypedExpr,
         scope: &mut Scope,
         pool: &mut ConstantPool,
         exit: Option<Label>,
@@ -381,7 +381,7 @@ impl<'a> Assembler<'a> {
     fn assemble_call(
         &mut self,
         function_idx: PoolIndex<Function>,
-        args: Vec<Expr<TypedAst>>,
+        args: Vec<TypedExpr>,
         scope: &mut Scope,
         pool: &mut ConstantPool,
         force_static: bool,
@@ -439,12 +439,12 @@ impl<'a> Assembler<'a> {
         Ok(())
     }
 
-    fn is_rvalue_ref(expr: &Expr<TypedAst>, scope: &Scope, pool: &ConstantPool) -> Option<bool> {
+    fn is_rvalue_ref(expr: &TypedExpr, scope: &Scope, pool: &ConstantPool) -> Option<bool> {
         let typ = type_of(expr, scope, pool).ok()?;
         match typ {
             TypeId::ScriptRef(_) => match expr {
                 Expr::Call(Callable::Intrinsic(IntrinsicOp::AsRef, _), _, args, _) => match args.first() {
-                    Some(expr) => Some(Self::is_rvalue(expr)),
+                    Some(expr) => Some(expr.is_prvalue()),
                     _ => Some(true),
                 },
                 _ => Some(true),
@@ -453,18 +453,10 @@ impl<'a> Assembler<'a> {
         }
     }
 
-    fn is_rvalue(expr: &Expr<TypedAst>) -> bool {
-        match expr {
-            Expr::Constant(_, _) | Expr::Ident(_, _) | Expr::This(_) | Expr::Super(_) => false,
-            Expr::Member(inner, _, _) | Expr::ArrayElem(inner, _, _) => Self::is_rvalue(inner),
-            _ => true,
-        }
-    }
-
     fn assemble_intrinsic(
         &mut self,
         intrinsic: IntrinsicOp,
-        args: Vec<Expr<TypedAst>>,
+        args: Vec<TypedExpr>,
         return_type: &TypeId,
         scope: &mut Scope,
         pool: &mut ConstantPool,
@@ -589,18 +581,18 @@ impl<'a> Assembler<'a> {
         let mut locations = Vec::with_capacity(self.labels);
         locations.resize(self.labels, Location::new(0));
 
-        let code = Code(self.instructions);
+        let code = Code::new(self.instructions);
         for (loc, instr) in code.iter() {
             if let Instr::Target(label) = instr {
                 locations[label.index] = loc;
             }
         }
 
-        let mut resolved = Vec::with_capacity(code.0.len());
+        let mut resolved = Vec::with_capacity(code.len());
         for (loc, instr) in code.iter().filter(|(_, instr)| !matches!(instr, Instr::Target(_))) {
             resolved.push(instr.resolve_labels(loc, &locations));
         }
-        Code(resolved)
+        Code::new(resolved)
     }
 
     pub fn from_body(

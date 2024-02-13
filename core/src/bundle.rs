@@ -315,7 +315,7 @@ impl ConstantPool {
         self.names.get(self.definition(index)?.name)
     }
 
-    pub fn definitions(&self) -> impl Iterator<Item = (PoolIndex<Definition>, &Definition)> {
+    pub fn definitions(&self) -> impl DoubleEndedIterator<Item = (PoolIndex<Definition>, &Definition)> {
         self.definitions
             .iter()
             .enumerate()
@@ -394,6 +394,17 @@ impl<K: DefaultString> Strings<K> {
                 .strings
                 .get(index.value as usize)
                 .cloned()
+                .ok_or_else(|| PoolError::StringNotFound(index.cast())),
+        }
+    }
+
+    pub fn get_ref(&self, index: PoolIndex<K>) -> Result<&str, PoolError> {
+        match K::DEFAULT {
+            Some(default) if index.is_undefined() => Ok(default),
+            _ => self
+                .strings
+                .get(index.value as usize)
+                .map(Ref::as_ref)
                 .ok_or_else(|| PoolError::StringNotFound(index.cast())),
         }
     }
@@ -615,6 +626,7 @@ impl Decode for Timestamp {
     }
 }
 
+#[repr(transparent)]
 pub struct PoolIndex<A> {
     value: u32,
     phantom: PhantomData<A>,

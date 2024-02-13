@@ -1,11 +1,12 @@
 use redscript::ast::{Expr, Seq};
 
 use super::{Diagnostic, DiagnosticPass, FunctionMetadata};
-use crate::typechecker::TypedAst;
+use crate::typechecker::{TypedAst, TypedExpr};
 
-pub struct ReturnValueCheck;
+#[derive(Debug)]
+pub struct MissingReturnCheck;
 
-impl DiagnosticPass for ReturnValueCheck {
+impl DiagnosticPass for MissingReturnCheck {
     fn diagnose(&self, body: &Seq<TypedAst>, meta: &FunctionMetadata) -> Vec<Diagnostic> {
         if meta.flags.has_return_value() && !meta.was_callback && !does_seq_return(body) {
             vec![Diagnostic::MissingReturn(meta.span)]
@@ -15,7 +16,7 @@ impl DiagnosticPass for ReturnValueCheck {
     }
 }
 
-fn does_always_return(expr: &Expr<TypedAst>) -> bool {
+fn does_always_return(expr: &TypedExpr) -> bool {
     match expr {
         Expr::Return(_, _) => true,
         Expr::Seq(seq) => does_seq_return(seq),

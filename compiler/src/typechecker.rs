@@ -36,7 +36,7 @@ impl<'a> TypeChecker<'a> {
         expr: &Expr<SourceAst>,
         expected: Option<&TypeId>,
         scope: &mut Scope,
-    ) -> Result<Expr<TypedAst>, Error> {
+    ) -> Result<TypedExpr, Error> {
         let res = match expr {
             Expr::Ident(name, span) => match scope.resolve_reference(name.clone()) {
                 Ok(reference) => Expr::Ident(reference, *span),
@@ -370,7 +370,7 @@ impl<'a> TypeChecker<'a> {
         expected: Option<&TypeId>,
         scope: &mut Scope,
         span: Span,
-    ) -> Result<Expr<TypedAst>, Error> {
+    ) -> Result<TypedExpr, Error> {
         if args.len() != intrinsic.arg_count().into() {
             let cause = Cause::InvalidArgCount(Ident::from_static(intrinsic.into()), intrinsic.arg_count() as usize);
             return Err(cause.with_span(span));
@@ -525,7 +525,7 @@ impl<'a> TypeChecker<'a> {
         expr: &Expr<SourceAst>,
         to: &TypeId,
         scope: &mut Scope,
-    ) -> Result<Expr<TypedAst>, Error> {
+    ) -> Result<TypedExpr, Error> {
         let checked = self.check(expr, Some(to), scope)?;
         let from = type_of(&checked, scope, self.pool)?;
         if let Some(conversion) = find_conversion(&from, to, self.pool)? {
@@ -637,7 +637,7 @@ impl<'a> TypeChecker<'a> {
 
     fn validate_args(
         fun_index: PoolIndex<Function>,
-        args: &[Expr<TypedAst>],
+        args: &[TypedExpr],
         param_types: &[TypeId],
         wanted_ret_type: Option<&TypeId>,
         scope: &Scope,
@@ -700,7 +700,7 @@ impl<'a> TypeChecker<'a> {
     }
 }
 
-pub fn type_of(expr: &Expr<TypedAst>, scope: &Scope, pool: &ConstantPool) -> Result<TypeId, Error> {
+pub fn type_of(expr: &TypedExpr, scope: &Scope, pool: &ConstantPool) -> Result<TypeId, Error> {
     let res = match expr {
         Expr::Ident(reference, span) => match reference {
             Reference::Value(Value::Local(idx)) => scope
@@ -886,7 +886,7 @@ fn find_conversion(from: &TypeId, to: &TypeId, pool: &ConstantPool) -> Result<Op
     Ok(result)
 }
 
-fn insert_conversion(expr: Expr<TypedAst>, type_: &TypeId, conversion: Conversion) -> Expr<TypedAst> {
+fn insert_conversion(expr: TypedExpr, type_: &TypeId, conversion: Conversion) -> TypedExpr {
     let span = expr.span();
     match conversion {
         Conversion::Identity => expr,
@@ -950,11 +950,11 @@ impl ArgConversion {
 #[derive(Debug)]
 pub struct FunctionMatch {
     pub index: PoolIndex<Function>,
-    pub args: Vec<Expr<TypedAst>>,
+    pub args: Vec<TypedExpr>,
 }
 
 impl FunctionMatch {
-    fn new(index: PoolIndex<Function>, args: Vec<Expr<TypedAst>>, conversions: Vec<ArgConversion>) -> Self {
+    fn new(index: PoolIndex<Function>, args: Vec<TypedExpr>, conversions: Vec<ArgConversion>) -> Self {
         let args = args
             .into_iter()
             .zip(conversions)
@@ -974,6 +974,27 @@ impl NameKind for TypedAst {
     type Member = Member;
     type Reference = Reference;
     type Type = TypeId;
+}
+
+pub type TypedExpr = Expr<TypedAst>;
+
+pub trait TypedExprExt {
+    fn is_prvalue(&self) -> bool;
+}
+
+impl TypedExprExt for TypedExpr {
+    fn is_prvalue(&self) -> bool {
+        match self {
+            Expr::Constant(_, _)
+            | Expr::Ident(_, _)
+            | Expr::This(_)
+            | Expr::Super(_)
+            | Expr::Call(Callable::Intrinsic(IntrinsicOp::Deref, _), _, _, _)
+            | Expr::Member(_, Member::ClassField(_), _) => false,
+            Expr::Member(inner, Member::StructField(_), _) | Expr::ArrayElem(inner, _, _) => inner.is_prvalue(),
+            _ => true,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

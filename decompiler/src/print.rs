@@ -130,7 +130,7 @@ pub fn write_definition<W: Write>(
             write!(out, "func {}({}) -> {}", pretty_name, params, return_type)?;
 
             if fun.flags.has_body() {
-                write_function_body(out, fun, pool, depth, mode)?;
+                write_function_body(out, fun, definition, pool, depth, mode)?;
             } else {
                 write!(out, ";")?;
             }
@@ -193,6 +193,7 @@ pub fn write_definition<W: Write>(
 fn write_function_body<W: Write>(
     out: &mut W,
     fun: &Function,
+    def: &Definition,
     pool: &ConstantPool,
     depth: usize,
     mode: OutputMode,
@@ -200,11 +201,11 @@ fn write_function_body<W: Write>(
     writeln!(out, " {{")?;
     match mode {
         OutputMode::Code { verbose } => {
-            let code = Decompiler::decompiled(fun, pool)?;
+            let code = Decompiler::decompiled(fun, def, pool)?;
             write_seq(out, &code, verbose, depth + 1)?;
         }
         OutputMode::SyntaxTree => {
-            let code = Decompiler::decompiled(fun, pool)?;
+            let code = Decompiler::decompiled(fun, def, pool)?;
             for expr in code.exprs {
                 write_indent(out, depth + 1)?;
                 writeln!(out, "{:#?}", expr)?;
@@ -400,7 +401,7 @@ fn write_call<W: Write>(
     if let Ok(binop) = BinOp::from_str(fun_name) {
         if parent_op
             .filter(|op| match op {
-                ParentOp::UnOp(_) | ParentOp::Dot => true,
+                ParentOp::UnOp | ParentOp::Dot => true,
                 ParentOp::BinOp(op) => !binop.does_associate(*op),
             })
             .is_some()
@@ -448,7 +449,7 @@ fn write_binop<W: Write>(
 
 fn write_unop<W: Write>(out: &mut W, param: &Expr<SourceAst>, op: UnOp, verbose: bool) -> Result<(), Error> {
     write!(out, "{}", format_unop(op))?;
-    write_expr_nested(out, param, Some(ParentOp::UnOp(op)), verbose, 0)
+    write_expr_nested(out, param, Some(ParentOp::UnOp), verbose, 0)
 }
 
 fn format_param(def: &Definition, pool: &ConstantPool) -> Result<String, Error> {
@@ -512,7 +513,7 @@ fn format_unop(op: UnOp) -> &'static str {
 }
 
 enum ParentOp {
-    UnOp(UnOp),
+    UnOp,
     BinOp(BinOp),
     Dot,
 }

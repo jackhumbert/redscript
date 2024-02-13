@@ -4,7 +4,7 @@ use error::Error;
 use redscript::ast::{Constant, Expr, Ident, Literal, Seq, SourceAst, Span, SwitchCase, Target, TypeName};
 use redscript::bundle::{ConstantPool, PoolIndex, DefinitionType};
 use redscript::bytecode::{CodeCursor, CursorError, Instr, IntrinsicOp, Location, Offset};
-use redscript::definition::Function;
+use redscript::definition::{Definition, Function};
 
 pub mod error;
 pub mod files;
@@ -12,8 +12,8 @@ pub mod print;
 
 pub struct Decompiler<'a> {
     code: CodeCursor<'a, Offset>,
+    definition: &'a Definition,
     pool: &'a ConstantPool,
-    base_method: Option<PoolIndex<Function>>,
 }
 
 #[no_mangle]
@@ -22,19 +22,11 @@ pub extern fn Decompile(byte_p: &u8) -> &u8 {
 }
 
 impl<'a> Decompiler<'a> {
-    pub fn new(
-        code: CodeCursor<'a, Offset>,
-        base_method: Option<PoolIndex<Function>>,
-        pool: &'a ConstantPool,
-    ) -> Decompiler<'a> {
-        Decompiler {
-            code,
-            pool,
-            base_method,
-        }
+    pub fn new(code: CodeCursor<'a, Offset>, definition: &'a Definition, pool: &'a ConstantPool) -> Self {
+        Self { code, definition, pool }
     }
 
-    pub fn decompiled(function: &Function, pool: &'a ConstantPool) -> Result<Seq<SourceAst>, Error> {
+    pub fn decompiled(function: &Function, def: &Definition, pool: &ConstantPool) -> Result<Seq<SourceAst>, Error> {
         let mut locals = BTreeMap::new();
         for local_index in &function.locals {
             let local = pool.local(*local_index)?;
@@ -43,7 +35,7 @@ impl<'a> Decompiler<'a> {
             locals.insert(name, type_);
         }
 
-        let mut decompiler = Decompiler::new(function.code.cursor(), function.base_method, pool);
+        let mut decompiler = Decompiler::new(function.code.cursor(), def, pool);
         let body = decompiler.decompile()?;
         merge_declarations(locals, body)
     }
@@ -323,7 +315,7 @@ impl<'a> Decompiler<'a> {
                         Expr::MethodCall(expr, name, params, Span::ZERO)
                     }
                 } else {
-                    let ctx = if self.base_method == Some(idx) {
+                    let ctx = if self.definition.name == def.name && self.definition.parent != def.parent {
                         Expr::Super(Span::ZERO)
                     } else {
                         Expr::This(Span::ZERO)
