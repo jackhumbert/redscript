@@ -4,11 +4,12 @@ version = 3
 
 [[package]]
 name = "ahash"
-version = "0.8.7"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c3a9648d43b9cd48db467b3f87fdd6e146bcc88ab0180006cef2179fe11d01"
+checksum = "72832d73be48bac96a5d7944568f305d829ed55b0ce3b483647089dfaf6cf704"
 dependencies = [
  "cfg-if 1.0.0",
+ "getrandom",
  "once_cell",
  "version_check",
  "zerocopy",
@@ -941,9 +942,9 @@ checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
-version = "0.14.3"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290f1a1d9242c78d09ce40a5e87e7554ee637af1351968159f4952f028f75604"
+checksum = "f93e7192158dbcda357bdec5fb5788eebf8bbac027f3f33e719d29135ae84156"
 dependencies = [
  "ahash",
  "allocator-api2",
@@ -1027,7 +1028,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "824b2ae422412366ba479e8111fd301f7b5faece8149317bb81925979a53f520"
 dependencies = [
  "equivalent",
- "hashbrown 0.14.3",
+ "hashbrown 0.14.2",
 ]
 
 [[package]]
@@ -1452,11 +1453,12 @@ dependencies = [
 name = "redscript"
 version = "0.5.17"
 dependencies = [
+ "ahash",
  "byteorder",
  "crc32fast",
  "enum-as-inner",
  "flexstr",
- "hashbrown 0.14.3",
+ "hashbrown 0.14.2",
  "itertools",
  "log",
  "modular-bitfield",
@@ -1487,7 +1489,7 @@ dependencies = [
  "enum-as-inner",
  "flexstr",
  "hamt-sync",
- "hashbrown 0.14.3",
+ "hashbrown 0.14.2",
  "itertools",
  "log",
  "peg",
@@ -1502,7 +1504,7 @@ dependencies = [
 name = "redscript-decompiler"
 version = "0.5.17"
 dependencies = [
- "hashbrown 0.14.3",
+ "hashbrown 0.14.2",
  "itertools",
  "log",
  "redscript",
@@ -1664,7 +1666,7 @@ dependencies = [
  "byteorder",
  "fd-lock",
  "flexi_logger",
- "hashbrown 0.14.3",
+ "hashbrown 0.14.2",
  "log",
  "msgbox",
  "predicates",
